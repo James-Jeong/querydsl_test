@@ -2,8 +2,8 @@ package study.querydsl;
 
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
-import com.querydsl.core.types.EntityPath;
-import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.ExpressionUtils;
+import com.querydsl.core.types.Projections;
 import com.querydsl.core.types.dsl.CaseBuilder;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.JPAExpressions;
@@ -16,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
 import study.querydsl.entity.Team;
+import study.querydsl.entity.dto.MemberDto;
+import study.querydsl.entity.dto.UserDto;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
@@ -584,6 +586,244 @@ public class QuerydslBasicTest {
         // 3) Then
         for (String s : result) {
             System.out.println("s = " + s);
+        }
+    }
+
+    /**
+     * Projection : select 문에 나열하는 것 (object, string, integer 등)
+     */
+    @Test
+    public void simpleProjection() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<Member> result = queryFactory
+                .select(member)
+                //.select(member.username)
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (Member member1 : result) {
+            System.out.println("member1 = " + member1);
+        }
+    }
+
+    /**
+     * Tuple 은 package com.querydsl.core; 에 속해있기 때문에
+     * 앞단으로 넘어가면 안좋다.
+     * 즉, repository 레벨에서만 다뤄야 한다.
+     * service, view, controller 에서는 사용하면 안되도록 설계해야 한다!
+     *
+     * 그래서 tuple 은 dto 로 바꿔서 반환해야 한다!!
+     */
+    @Test
+    public void tupleProjection() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<Tuple> result = queryFactory
+                .select(member.username, member.age)
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (Tuple tuple : result) {
+            String username = tuple.get(member.username);
+            System.out.println("username = " + username);
+            Integer age = tuple.get(member.age);
+            System.out.println("age = " + age);
+        }
+    }
+
+    @Test
+    public void findDtoByJPQL() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<MemberDto> result = entityManager
+                .createQuery(
+                        /**
+                         * 패키지명을 언제 다적고 있냐고... 너무 더럽다 더러워 아으
+                         */
+                        "select new study.querydsl.entity.dto.MemberDto(m.username, m.age) from Member m",
+                        MemberDto.class
+                )
+                .getResultList();
+
+        // 3) Then
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    /**
+     * # Bean Population
+     * - 결과를 DTO 로 반환할 때 사용
+     *
+     * 1. Property 접근 (setter)
+     * 2. 필드 직접 접근
+     * 3. 생성자 사용
+     *
+     */
+    @Test
+    public void findDtoBySetter() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<MemberDto> result = queryFactory
+                .select(
+                        /**
+                         * 그냥 놀랍다 놀라워 아으
+                         * 순서 상관없다.
+                         */
+                        Projections.bean(
+                                MemberDto.class,
+                                member.age,
+                                member.username
+                        ) // Setter 라서 기본 생성자가 정의 되어 있어야 한다.
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    @Test
+    public void findDtoByField() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<MemberDto> result = queryFactory
+                .select(
+                        /**
+                         * 클래스 내부 필드에 바로 꽂아버린다 아으
+                         * 순서 상관없다.
+                         */
+                        Projections.fields(
+                                MemberDto.class,
+                                member.age,
+                                member.username
+                        )
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    @Test
+    public void findDtoByConstructor() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<MemberDto> result = queryFactory
+                .select(
+                        /**
+                         * 생성자 타입을 잘 맞춰야 한다.
+                         * 순서 맞춰야 한다.
+                         */
+                        Projections.constructor(
+                                MemberDto.class,
+                                member.username,
+                                member.age
+                        )
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    @Test
+    public void findUserDtoByField() throws Exception {
+        // 1) Given
+        QMember memberSub = new QMember("memberSub");
+
+        // 2) When
+        List<UserDto> result = queryFactory
+                .select(
+                        /**
+                         * 필드 이름이 안맞으면 매칭되는게 없어서 무시되서 값이 안들어간다.
+                         *
+                         * userDto = UserDto(name=null, age=10)
+                         * userDto = UserDto(name=null, age=20)
+                         * userDto = UserDto(name=null, age=30)
+                         * userDto = UserDto(name=null, age=40)
+                         *
+                         * 그래서 .as("name") 으로 해줘야 한다.
+                         */
+                        Projections.fields(
+                                UserDto.class,
+                                /**
+                                 * SubQuery 사용할 경우에는 ExpressionUtils 로 감싸야 한다.
+                                 */
+                                ExpressionUtils.as(
+                                        /**
+                                         * userDto = UserDto(name=member1, age=10)
+                                         * userDto = UserDto(name=member1, age=20)
+                                         * userDto = UserDto(name=member1, age=30)
+                                         * userDto = UserDto(name=member1, age=40)
+                                         */
+                                        JPAExpressions
+                                                .select(memberSub.username)
+                                                .from(memberSub)
+                                                .where(memberSub.username.eq("member1")),
+                                        "name"
+                                ),
+                                //member.username.as("name"),
+                                //member.username,
+                                member.age
+                                /*ExpressionUtils.as(
+                                        JPAExpressions
+                                                .select(memberSub.age.max())
+                                                .from(memberSub),
+                                        "age"
+                                )*/
+                        )
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (UserDto userDto : result) {
+            System.out.println("userDto = " + userDto);
+        }
+    }
+
+    @Test
+    public void findUserDtoByConstructor() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<UserDto> result = queryFactory
+                .select(
+                        /**
+                         * 생성자 타입을 잘 맞춰야 한다.
+                         * 순서 맞춰야 한다.
+                         * 필드 이름과 상관 없다!
+                         */
+                        Projections.constructor(
+                                UserDto.class,
+                                member.username,
+                                member.age
+                        )
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (UserDto userDto : result) {
+            System.out.println("userDto = " + userDto);
         }
     }
 
