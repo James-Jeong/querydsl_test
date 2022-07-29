@@ -1,9 +1,11 @@
 package study.querydsl;
 
+import com.querydsl.core.BooleanBuilder;
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
 import com.querydsl.core.types.ExpressionUtils;
 import com.querydsl.core.types.Projections;
+import com.querydsl.core.types.dsl.BooleanExpression;
 import com.querydsl.core.types.dsl.CaseBuilder;
 import com.querydsl.core.types.dsl.Expressions;
 import com.querydsl.jpa.JPAExpressions;
@@ -13,19 +15,23 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import study.querydsl.entity.Member;
 import study.querydsl.entity.QMember;
 import study.querydsl.entity.Team;
 import study.querydsl.entity.dto.MemberDto;
+import study.querydsl.entity.dto.QMemberDto;
 import study.querydsl.entity.dto.UserDto;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityManagerFactory;
 import javax.persistence.PersistenceUnit;
 import java.util.List;
+import java.util.Objects;
 
-import static com.querydsl.jpa.JPAExpressions.*;
+import static com.querydsl.jpa.JPAExpressions.select;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.util.StringUtils.*;
 import static study.querydsl.entity.QMember.member;
 import static study.querydsl.entity.QTeam.team;
 
@@ -818,12 +824,340 @@ public class QuerydslBasicTest {
                                 member.age
                         )
                 )
+                //.distinct()
                 .from(member)
                 .fetch();
 
         // 3) Then
         for (UserDto userDto : result) {
             System.out.println("userDto = " + userDto);
+        }
+    }
+
+    /**
+     * Constructor 안쓰고 QueryProjection 쓰는 이유는? 차이점은?
+     *
+     * > Constructor 사용하면 생성자에 타입이 안맞는 값을 넣을 때 컴파일 타임 오류를 잡아낼 수 없다.
+     *   런타임 오류로만 확인이 가능하다.
+     *
+     * > QueryProjection 에서는 바로 컴파일 타임 오류로 확인된다.
+     * 근데 단점이라고 하면, Q File 을 생성해야하는 것이다.
+     * 그리고 DTO 클래스가 QueryDSL 라이브러리에 의존된다.
+     * 이 DTO 가 repository 말고 서비스나 컨트롤러에서 넘어가서 사용될 수 있는데,
+     * QueryDSL 에 의존적인 설계로 인해 DTO 가 사용되는 서비스나 컨트롤러 코드가 QueryDSL 에 종속적이게 된다.
+     * 순수하지 않은 POJO 객체가 되는 것이다.
+     * > 설계를 잘해볼 필요가 있다...
+     *
+     */
+    @Test
+    public void findDtoQueryProjection() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<MemberDto> result = queryFactory
+                .select(
+                        new QMemberDto(member.username, member.age)
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (MemberDto memberDto : result) {
+            System.out.println("memberDto = " + memberDto);
+        }
+    }
+
+    /**
+     * 동적 쿼리
+     * Q1) Member1 인 유저 이름과 나이가 10살인 멤버를 찾고 싶다.
+     */
+    @Test
+    public void dynamicQuery_BooleanBuilder() throws Exception {
+        // 1) Given
+        String usernameParam = "member1";
+        Integer ageParam = null;
+        //Integer ageParam = 10;
+
+        // 2) When
+        List<Member> result = searchMember1(usernameParam, ageParam);
+
+        // 3) Then
+        assertThat(result).hasSize(1);
+    }
+
+    private List<Member> searchMember1(String usernameCond, Integer ageCond) {
+        BooleanBuilder booleanBuilder = new BooleanBuilder();
+        if (usernameCond != null && !usernameCond.isEmpty()) {
+            booleanBuilder.and(member.username.eq(usernameCond));
+        }
+
+        if (ageCond != null && ageCond > 0) {
+            booleanBuilder.and(member.age.eq(ageCond));
+        }
+
+        return queryFactory
+                .selectFrom(member)
+                .where(booleanBuilder)
+                .fetch();
+    }
+
+    /**
+     * BooleanBuilder 보다 더 개발자 친화적이다.
+     * 함수로 코드의 의미를 바로 파악할 수 있기 때문에 더 가독성이 높다.
+     */
+    @Test
+    public void dynamicQuery_WhereParam() throws Exception {
+        // 1) Given
+        String usernameParam = "member1";
+        Integer ageParam = null;
+        //Integer ageParam = 10;
+
+        // 2) When
+        List<Member> result = searchMember2(usernameParam, ageParam);
+
+        // 3) Then
+        assertThat(result).hasSize(1);
+    }
+
+    private List<Member> searchMember2(String usernameCond, Integer ageCond) {
+        return queryFactory
+                .selectFrom(member)
+                .where(
+                        /**
+                         * 함수 리턴값이 null 이면 where 절에서 무시된다.
+                         */
+                        isAllInfoEqual(usernameCond, ageCond)
+                        /*isUsernameEqual(usernameCond),
+                        isAgeEqual(ageCond)*/
+                )
+                .fetch();
+    }
+
+    //private Predicate isUsernameEqual(String usernameCond) {
+    private BooleanExpression isUsernameEqual(String usernameCond) {
+        if (hasText(usernameCond)) { return null; }
+        return member.username.eq(usernameCond);
+    }
+
+    private BooleanExpression isAgeEqual(Integer ageCond) {
+        if (ageCond == null || ageCond <= 0) {
+            return null;
+        }
+        return member.age.eq(ageCond);
+    }
+
+    /**
+     * 이렇게 함수로 사용하게 되면 조립(조합)을 할 수 있다. 재사용도 할 수 있다.
+     */
+    private BooleanExpression isAllInfoEqual(String usernameCond, Integer ageCond) {
+        return Objects.requireNonNull(
+                Objects.requireNonNull(isUsernameEqual(usernameCond))
+        ).and(isAgeEqual(ageCond));
+    }
+
+    @Test
+    public void bulkUpdate() throws Exception {
+        // 1) Given
+
+        // 2) When
+        /**
+         * JPQL 을 사용하므로 자동으로 Update 실행 시 영속성 컨텍스트가 flush 된다.
+         */
+        long resultRowNum = queryFactory
+                .update(member)
+                .set(member.username, "비회원")
+                .where(member.age.lt(28))
+                .execute();
+
+        /**
+         * 벌크 업데이트 적용 후에 쿼리로 데이터 조회하면 잘나오지만,
+         * 만약에 벌크 연산을 때리고 트랜잭션이 끝나지 않은 상태에서 영속성 컨텍스트에서 값을 가져오면 데이터 정합성이 맞지 않는다.
+         * 그 이유는 JPA 영속성 컨텍스트는 이미 1차 캐시로 조회한 객체가 존재하면 DB 에서 가져온 값을 버린다. (영속성 컨텍스트에 있는 값이 우선이다.)
+         *
+         * > 근데 왜 반영이 잘되지? 하이버네이트 버전이 업데이트되서 그런가?...
+         */
+        Member member1 = entityManager.find(
+                Member.class,
+                3L
+        );
+        System.out.println("member1 = " + member1);
+        /**
+         * > member1 = Member{id=3, username='비회원', age=10}
+         *
+         * member1 = Member{id=3, username='member1', age=10} 이 아님...
+         */
+
+        /**
+         * 초기화를 해줘야 한다.
+         *
+         * 엔티티 매니저의 SQL저장소에 혹시라도 남아있을지 모를 쿼리를 실행하기 위해 flush()를 같이 실행한다.
+         */
+        //entityManager.flush();
+       // entityManager.clear();
+
+        // 3) Then
+        /**
+         * member1 = 10 -> 비회원
+         * member2 = 20 -> 비회원
+         * member3 = 30 -> member3
+         * member4 = 40 -> member4
+         */
+        assertThat(resultRowNum).isEqualTo(2);
+
+        for (Member fetch : queryFactory
+                // selectFrom을 사용하게 되면 JPQL이 실행된다. JPQL은 실행직전에 플러시를 호출한다.
+                .selectFrom(member)
+                .fetch()) {
+            System.out.println("fetch = " + fetch);
+        }
+        /**
+         * fetch = Member{id=3, username='비회원', age=10}
+         * fetch = Member{id=4, username='비회원', age=20}
+         * fetch = Member{id=5, username='member3', age=30}
+         * fetch = Member{id=6, username='member4', age=40}
+         */
+    }
+
+    @Test
+    public void bulkAdd() throws Exception {
+        // 1) Given
+        System.out.println("BEFORE");
+        for (Member fetch : queryFactory
+                .selectFrom(member)
+                .fetch()) {
+            System.out.println("fetch = " + fetch);
+        }
+        /**
+         * fetch = Member{id=3, username='member1', age=10}
+         * fetch = Member{id=4, username='member2', age=20}
+         * fetch = Member{id=5, username='member3', age=30}
+         * fetch = Member{id=6, username='member4', age=40}
+         */
+        System.out.println("BEFORE");
+
+
+        // 2) When
+        long count = queryFactory
+                .update(member)
+                .set(member.age, member.age.add(1))
+                //.set(member.age, member.age.multiply(2))
+                .execute();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // 3) Then
+        assertThat(count).isEqualTo(4);
+
+        System.out.println("-----------------------------");
+        System.out.println("AFTER");
+        for (Member fetch : queryFactory
+                .selectFrom(member)
+                .fetch()) {
+            System.out.println("fetch = " + fetch);
+        }
+        /**
+         * fetch = Member{id=3, username='member1', age=11}
+         * fetch = Member{id=4, username='member2', age=21}
+         * fetch = Member{id=5, username='member3', age=31}
+         * fetch = Member{id=6, username='member4', age=41}
+         */
+        System.out.println("AFTER");
+    }
+
+    @Test
+    public void bulkDelete() throws Exception {
+        // 1) Given
+        for (Member fetch : queryFactory
+                .selectFrom(member)
+                .fetch()) {
+            System.out.println("fetch = " + fetch);
+        }
+        /**
+         * fetch = Member{id=3, username='member1', age=10}
+         * fetch = Member{id=4, username='member2', age=20}
+         * fetch = Member{id=5, username='member3', age=30}
+         * fetch = Member{id=6, username='member4', age=40}
+         */
+
+        // 2) When
+        long count = queryFactory
+                .delete(member)
+                .where(member.age.gt(10))
+                .execute();
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // 3) Then
+        assertThat(count).isEqualTo(3);
+
+        for (Member fetch : queryFactory
+                .selectFrom(member)
+                .fetch()) {
+            System.out.println("fetch = " + fetch);
+        }
+        /**
+         * fetch = Member{id=3, username='member1', age=10}
+         */
+    }
+
+    /**
+     * 멤버들의 이름에서 member 라는 문자열을 M 으로 바꾼다.
+     */
+    @Test
+    public void sqlFunctionReplace() throws Exception {
+        // 1) Given
+
+        // 2) When
+        List<String> result = queryFactory
+                .select(
+                        Expressions.stringTemplate(
+                                "function('replace', {0}, {1}, {2})",
+                                member.username, "member", "M"
+                        )
+                )
+                .from(member)
+                .fetch();
+
+        // 3) Then
+        for (String s : result) {
+            System.out.println("s = " + s);
+        }
+        /**
+         * s = M1
+         * s = M2
+         * s = M3
+         * s = M4
+         */
+    }
+
+    @Test
+    public void sqlFunctionLower() throws Exception {
+        // 1) Given
+
+        // 2) When
+        // 예제가 썩 좋지는 않다.
+        List<String> result = queryFactory
+                .select(member.username)
+                .from(member)
+                /*.where(
+                        member.username.eq(
+                                Expressions.stringTemplate(
+                                        "function('lower', {0})",
+                                        member.username
+                                )
+                        )
+                )*/
+                .where(
+                        // QueryDSL 에서는 ANSI 표준 함수를 거의 다 제공한다.
+                        member.username.eq(member.username.lower())
+                )
+                .fetch();
+
+        // 3) Then
+        for (String s : result) {
+            System.out.println("s = " + s);
         }
     }
 
