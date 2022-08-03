@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import study.querydsl.entity.Member;
+import study.querydsl.entity.QMember;
 import study.querydsl.entity.Team;
 import study.querydsl.entity.condition.MemberSearchCondition;
 import study.querydsl.entity.dto.MemberTeamDto;
@@ -15,6 +16,7 @@ import javax.transaction.Transactional;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static study.querydsl.entity.QMember.*;
 
 @SpringBootTest
 @Transactional
@@ -115,6 +117,46 @@ class MemberRepositoryTest {
         assertThat(memberTeamDtos)
                 .extracting("username")
                 .containsExactly("member1", "member2", "member3");
+    }
+
+    @Test
+    public void querydslPredicateExecutorTest() throws Exception {
+        // 1) Given
+        Team teamA = new Team("teamA");
+        Team teamB = new Team("teamB");
+        entityManager.persist(teamA);
+        entityManager.persist(teamB);
+
+        Member member1 = new Member("member1", 10, teamA);
+        Member member2 = new Member("member2", 20, teamA);
+        Member member3 = new Member("member3", 30, teamB);
+        Member member4 = new Member("member4", 40, teamB);
+        entityManager.persist(member1);
+        entityManager.persist(member2);
+        entityManager.persist(member3);
+        entityManager.persist(member4);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // 2) When
+        /**
+         * 1. 조인이 안된다.
+         * 2. 클라이언트(또는 컨트롤러)가 QueryDSL 에 의존해야 한다. 서비스 클래스가 QueryDSL 이라는 구현 기술에 의존해야 한다.
+         * 3. 복잡한 실무환경에서 사용하기에는 한계가 명확하다.
+         * 4. 단순한 비교 조건 연산만 가능
+         *
+         * - Pageable, Sort 모두 지원함
+         */
+        Iterable<Member> memberIterable = memberRepository.findAll(
+                member.age.between(10, 40)
+                        .and(member.username.eq("member1"))
+        );
+
+        // 3) Then
+        for (Member result : memberIterable) {
+            System.out.println("result = " + result);
+        }
     }
 
 
